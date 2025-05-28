@@ -2,6 +2,7 @@ use crate::parir_compile_error;
 use crate::ir::ast as ir_ast;
 use crate::py::ast::{BinOp, Builtin, ElemSize};
 use crate::py::ast as py_ast;
+use crate::gpu::ast as gpu_ast;
 use crate::cuda::ast as cu_ast;
 use crate::utils::err::*;
 use crate::utils::info::*;
@@ -49,6 +50,23 @@ impl ExprLit for ir_ast::Expr {
             },
             ElemSize::F16 | ElemSize::F32 | ElemSize::F64 => {
                 ir_ast::Expr::Float {v, ty, i}
+            }
+        }
+    }
+}
+
+impl ExprLit for gpu_ast::Expr {
+    fn generate_literal(v: f64, sz: &ElemSize, i: Info) -> gpu_ast::Expr {
+        let ty = gpu_ast::Type::Scalar {sz: sz.clone()};
+        match sz {
+            ElemSize::Bool => {
+                gpu_ast::Expr::Bool {v: gpu_ast::Expr::to_bool_lit(v), ty, i}
+            },
+            ElemSize::I8 | ElemSize::I16 | ElemSize::I32 | ElemSize::I64 => {
+                gpu_ast::Expr::Int {v: gpu_ast::Expr::to_int_lit(v), ty, i}
+            },
+            ElemSize::F16 | ElemSize::F32 | ElemSize::F64 => {
+                gpu_ast::Expr::Float {v, ty, i}
             }
         }
     }

@@ -41,7 +41,6 @@ impl PrettyPrint for MemSpace {
         let s = match self {
             MemSpace::Device => "device",
             MemSpace::Shared => "shared",
-            MemSpace::Host => "host",
         };
         (env, s.to_string())
     }
@@ -318,6 +317,21 @@ impl PrettyPrint for Expr {
                 };
                 (env, s)
             },
+            Expr::Struct {id, fields, ..} => {
+                let (env, id) = id.pprint(env);
+                let (env, fields) = fields.iter()
+                    .fold((env, vec![]), |(env, mut strs), (id, e)| {
+                        let (env, e) = e.pprint(env);
+                        strs.push(format!(".{id}: {e}"));
+                        (env, strs)
+                    });
+                let outer_indent = env.print_indent();
+                let env = env.incr_indent();
+                let indent = env.print_indent();
+                let fields = fields.into_iter().join(&format!(",\n{indent}"));
+                let env = env.decr_indent();
+                (env, format!("{id} {{\n{indent}{fields}\n{outer_indent}}}"))
+            },
             Expr::WarpReduce {value, op, ..} => {
                 let (env, value) = value.pprint(env);
                 let (env, op) = op.pprint(env);
@@ -356,18 +370,18 @@ impl PrettyPrint for Stmt {
     fn pprint(&self, env: PrettyPrintEnv) -> (PrettyPrintEnv, String) {
         let indent = env.print_indent();
         match self {
-            Stmt::Definition {ty, id, expr} => {
+            Stmt::Definition {ty, id, expr, ..} => {
                 let (env, ty) = ty.pprint(env);
                 let (env, id) = id.pprint(env);
                 let (env, expr) = expr.pprint(env);
                 (env, format!("{indent}{ty} {id} = {expr};"))
             },
-            Stmt::Assign {dst, expr} => {
+            Stmt::Assign {dst, expr, ..} => {
                 let (env, dst) = dst.pprint(env);
                 let (env, expr) = expr.pprint(env);
                 (env, format!("{indent}{dst} = {expr};"))
             },
-            Stmt::For {var_ty, var, init, cond, incr, body} => {
+            Stmt::For {var_ty, var, init, cond, incr, body, ..} => {
                 let (env, var_ty) = var_ty.pprint(env);
                 let (env, var) = var.pprint(env);
                 let (env, init) = init.pprint(env);
@@ -382,13 +396,13 @@ impl PrettyPrint for Stmt {
                 );
                 (env, s)
             },
-            Stmt::If {cond, thn, els} => {
+            Stmt::If {cond, thn, els, ..} => {
                 let (env, cond) = cond.pprint(env);
                 let env = env.incr_indent();
                 let (env, thn_str) = pprint_iter(thn.iter(), env, "\n");
                 let (env, thn, els) = match &els[..] {
                     [Stmt::If {
-                        cond: elif_cond, thn: elif_thn, els: elif_els
+                        cond: elif_cond, thn: elif_thn, els: elif_els, ..
                     }] if !elif_thn.is_empty() => {
                         let (env, elif_cond) = elif_cond.pprint(env);
                         let (env, elif_thn) = pprint_iter(elif_thn.iter(), env, "\n");
@@ -417,7 +431,7 @@ impl PrettyPrint for Stmt {
                 let env = env.decr_indent();
                 (env, s)
             },
-            Stmt::While {cond, body} => {
+            Stmt::While {cond, body, ..} => {
                 let (env, cond) = cond.pprint(env);
                 let env = env.incr_indent();
                 let (env, body) = pprint_iter(body.iter(), env, "\n");
@@ -425,26 +439,31 @@ impl PrettyPrint for Stmt {
                 let s = format!("{0}while ({1}) {{\n{2}\n{0}}}", indent, cond, body);
                 (env, s)
             },
-            Stmt::Scope {body} => {
+            Stmt::Scope {body, ..} => {
                 let env = env.incr_indent();
                 let (env, body) = pprint_iter(body.iter(), env, "\n");
                 let env = env.decr_indent();
                 (env, format!("{0}{{\n{1}\n{0}}}", indent, body))
             },
-            Stmt::SynchronizeBlock {} => {
+            Stmt::SynchronizeBlock {..} => {
                 (env, format!("{indent}sync_block();"))
             },
-            Stmt::KernelLaunch {id, args, grid} => {
+            Stmt::KernelLaunch {id, args, grid, ..} => {
                 let (env, id) = id.pprint(env);
                 let (env, args) = pprint_iter(args.iter(), env, ", ");
                 let (env, grid) = grid.pprint(env);
                 (env, format!("{indent}launch({id}, [{args}], {grid})"))
             },
-            Stmt::Alloc {id, elem_ty, sz, mem} => {
-                todo!()
+            Stmt::Alloc {id, elem_ty, sz, mem, ..} => {
+                let (env, id) = id.pprint(env);
+                let (env, elem_ty) = elem_ty.pprint(env);
+                let (env, mem) = mem.pprint(env);
+                (env, format!("{indent}id = alloc({sz}, {elem_ty}, {mem});"))
             },
-            Stmt::Dealloc {id, mem} => {
-                todo!()
+            Stmt::Dealloc {id, mem, ..} => {
+                let (env, id) = id.pprint(env);
+                let (env, mem) = mem.pprint(env);
+                (env, format!("{indent}dealloc({id}, {mem});"))
             },
         }
     }
@@ -464,16 +483,25 @@ impl PrettyPrint for Param {
     }
 }
 
+impl PrettyPrint for Field {
+    fn pprint(&self, env: PrettyPrintEnv) -> (PrettyPrintEnv, String) {
+        let Field {id, ty, ..} = self;
+        let (env, ty) = ty.pprint(env);
+        let indent = env.print_indent();
+        (env, format!("{indent}{ty} {id};"))
+    }
+}
+
 impl PrettyPrint for Top {
     fn pprint(&self, env: PrettyPrintEnv) -> (PrettyPrintEnv, String) {
         match self {
-            Top::DeviceFunDef {maxthreads, id, params, body} => {
+            Top::DeviceFunDef {threads, id, params, body} => {
                 let (env, id) = id.pprint(env);
                 let (env, params) = pprint_iter(params.iter(), env, ", ");
                 let env = env.incr_indent();
                 let (env, body) = pprint_iter(body.iter(), env, "\n");
                 let env = env.decr_indent();
-                (env, format!("maxthreads({maxthreads})\nvoid {id}({params}) {{\n{body}\n}}"))
+                (env, format!("threads({threads})\nvoid {id}({params}) {{\n{body}\n}}"))
             },
             Top::HostFunDef {ret_ty, id, params, body} => {
                 let (env, ret_ty) = ret_ty.pprint(env);
@@ -483,6 +511,13 @@ impl PrettyPrint for Top {
                 let (env, body) = pprint_iter(body.iter(), env, "\n");
                 let env = env.decr_indent();
                 (env, format!("{ret_ty} {id}({params}) {{\n{body}\n}}"))
+            },
+            Top::StructDef {id, fields} => {
+                let (env, id) = id.pprint(env);
+                let env = env.incr_indent();
+                let (env, fields) = pprint_iter(fields.iter(), env, "\n");
+                let env = env.decr_indent();
+                (env, format!("struct {id} {{\n{fields}\n}};"))
             },
         }
     }
@@ -538,6 +573,10 @@ mod test {
 
     fn int64_ty() -> Type {
         scalar_ty(ElemSize::I64)
+    }
+
+    fn i() -> Info {
+        Info::default()
     }
 
     #[test]
@@ -673,21 +712,22 @@ mod test {
 
     #[test]
     fn pprint_syncblock() {
-        let s = Stmt::SynchronizeBlock {}.pprint_default();
+        let s = Stmt::SynchronizeBlock {i: i()}.pprint_default();
         assert_eq!(&s, "sync_block();");
     }
 
     #[test]
     fn pprint_for_loop() {
-        let i = Name::new("i".to_string());
-        let i_var = Expr::Var {id: i.clone(), ty: scalar_ty(ElemSize::I64), i: Info::default()};
+        let id = Name::new("i".to_string());
+        let i_var = Expr::Var {id: id.clone(), ty: scalar_ty(ElemSize::I64), i: i()};
         let for_loop = Stmt::For {
             var_ty: scalar_ty(ElemSize::I64),
-            var: i,
+            var: id,
             init: int(0),
             cond: bop(i_var.clone(), BinOp::Lt, int(10), None),
             incr: bop(i_var.clone(), BinOp::Add, int(1), None),
-            body: vec![Stmt::Assign {dst: var("x"), expr: var("y")}],
+            body: vec![Stmt::Assign {dst: var("x"), expr: var("y"), i: i()}],
+            i: i()
         };
         let indent = " ".repeat(pprint::DEFAULT_INDENT);
         let expected = format!(
@@ -704,10 +744,11 @@ mod test {
                 op: BinOp::Eq,
                 rhs: Box::new(var("y")),
                 ty: Type::Boolean,
-                i: Info::default()
+                i: i()
             },
-            thn: vec![Stmt::Assign {dst: var("x"), expr: var("y")}],
-            els: vec![Stmt::Assign {dst: var("y"), expr: var("x")}],
+            thn: vec![Stmt::Assign {dst: var("x"), expr: var("y"), i: i()}],
+            els: vec![Stmt::Assign {dst: var("y"), expr: var("x"), i: i()}],
+            i: i()
         };
         let indent = " ".repeat(pprint::DEFAULT_INDENT);
         let expected = format!(
@@ -724,10 +765,11 @@ mod test {
                 op: BinOp::Eq,
                 rhs: Box::new(var("y")),
                 ty: Type::Boolean,
-                i: Info::default()
+                i: i()
             },
-            thn: vec![Stmt::Assign {dst: var("x"), expr: var("y")},],
+            thn: vec![Stmt::Assign {dst: var("x"), expr: var("y"), i: i()}],
             els: vec![],
+            i: i()
         };
         let indent = " ".repeat(pprint::DEFAULT_INDENT);
         let expected = format!("if (x == y) {{\n{indent}x = y;\n}}");
@@ -738,12 +780,14 @@ mod test {
     fn pprint_if_cond_elseif() {
         let cond = Stmt::If {
             cond: var("x"),
-            thn: vec![Stmt::Assign {dst: var("y"), expr: var("z")}],
+            thn: vec![Stmt::Assign {dst: var("y"), expr: var("z"), i: i()}],
             els: vec![Stmt::If {
                     cond: var("y"),
-                    thn: vec![Stmt::Assign {dst: var("x"), expr: var("z")}],
-                    els: vec![Stmt::Assign {dst: var("z"), expr: var("x")}],
+                    thn: vec![Stmt::Assign {dst: var("x"), expr: var("z"), i: i()}],
+                    els: vec![Stmt::Assign {dst: var("z"), expr: var("x"), i: i()}],
+                    i: i()
             }],
+            i: i()
         };
         let indent = " ".repeat(pprint::DEFAULT_INDENT);
         let expected = format!(
@@ -757,7 +801,8 @@ mod test {
     fn pprint_while() {
         let wh = Stmt::While {
             cond: var("x"),
-            body: vec![Stmt::Assign {dst: var("y"), expr: var("z")}]
+            body: vec![Stmt::Assign {dst: var("y"), expr: var("z"), i: i()}],
+            i: i()
         };
         let indent = " ".repeat(pprint::DEFAULT_INDENT);
         let expected = format!("while (x) {{\n{indent}y = z;\n}}");
@@ -770,7 +815,8 @@ mod test {
         let kernel = Stmt::KernelLaunch {
             id: Name::new(id.to_string()),
             args: vec![var("x"), var("y")],
-            grid: LaunchArgs::default()
+            grid: LaunchArgs::default(),
+            i: i()
         };
         let grid_str = LaunchArgs::default().pprint_default();
         let expected = format!("launch({id}, [x, y], {grid_str})");
@@ -780,13 +826,13 @@ mod test {
     #[test]
     fn pprint_device_fun_def() {
         let def = Top::DeviceFunDef {
-            maxthreads: 1024,
+            threads: 1024,
             id: Name::new("f".to_string()),
             params: vec![],
-            body: vec![Stmt::Assign {dst: var("x"), expr: var("y")}]
+            body: vec![Stmt::Assign {dst: var("x"), expr: var("y"), i: i()}]
         };
         let indent = " ".repeat(pprint::DEFAULT_INDENT);
-        let expected = format!("void f() {{\n{0}x = y;\n}}", indent);
+        let expected = format!("threads(1024)\nvoid f() {{\n{0}x = y;\n}}", indent);
     }
 
     #[test]
@@ -795,7 +841,7 @@ mod test {
             ret_ty: Type::Void,
             id: Name::new("f".to_string()),
             params: vec![],
-            body: vec![Stmt::Assign {dst: var("x"), expr: var("y")}]
+            body: vec![Stmt::Assign {dst: var("x"), expr: var("y"), i: i()}]
         };
         let indent = " ".repeat(pprint::DEFAULT_INDENT);
         let expected = format!("void f() {{\n{0}x = y;\n}}", indent);

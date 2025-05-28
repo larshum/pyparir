@@ -1,5 +1,5 @@
 pub mod ast;
-//mod codegen;
+mod codegen;
 mod pprint;
 
 use ast::*;
@@ -13,6 +13,5 @@ pub fn codegen(ir_ast: ir_ast::Ast, debug_env: &DebugEnv) -> CompileResult<Ast> 
     let gpu_ast = gpu::from_general_ir(ir_ast, debug_env)?;
 
     // Convert the GPU AST to a CUDA C++ AST.
-    //codegen::from_gpu_ir(gpu_ast)
-    todo!()
+    codegen::from_gpu_ir(gpu_ast)
 }
