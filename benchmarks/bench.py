@@ -4,6 +4,7 @@ mpl.use('Agg')
 import matplotlib.pyplot as plt
 import contextlib
 import io
+import numpy as np
 import os
 import pandas as pd
 import ssgetpy
@@ -151,19 +152,41 @@ def run_forward_benchmark():
     produce_forward_output(csv_file, frameworks, configurations, kmer)
 
 def produce_sddmm_output(csv_file, frameworks, k):
+    def set_colors(bp, colors):
+        for i, c in enumerate(colors):
+            plt.setp(bp["boxes"][i], color=c)
+            plt.setp(bp["whiskers"][2*i], color=c)
+            plt.setp(bp["whiskers"][2*i+1], color=c)
+            plt.setp(bp["caps"][2*i], color=c)
+            plt.setp(bp["caps"][2*i+1], color=c)
+            plt.setp(bp["medians"][i], color="#000000")
     results_df = pd.read_csv(csv_file)
     fig, axs = plt.subplots(layout="constrained")
-    markers = ['x', '|', '_']
+    times = [[] for i in range(9)]
+    colors = ["#0072B2", "#D55E00", "#E69F00"]
     for i, framework in enumerate(frameworks):
         fw_res = results_df[results_df["framework"] == framework]
-        runtimes = fw_res.groupby("nnz")["time"].median()
-        axs.scatter(runtimes.index, runtimes, s=8, marker=markers[i], label=framework, alpha=0.75)
-    axs.set_xscale("log")
+        # Group by number of non-zeros within an exponential range, and
+        # produce a box plot for each interval.
+        for e in range(1, 10):
+            nnz_range = fw_res["nnz"].between(10**(e-1), 10**e)
+            times[e-1].append(fw_res["time"][nnz_range])
+    for i in range(9):
+        bp = axs.boxplot(times[i], positions=[i*4+1, i*4+2, i*4+3], sym='', widths=0.6)
+        set_colors(bp, colors)
+    axs.set_xticks([i for i in np.arange(0, 36, 4)])
+    axs.set_xticklabels([f"$10^{i}$" for i in range(9)])
     axs.set_yscale("log")
     axs.set_xlabel("Number of non-zero values", fontsize=16)
     axs.set_ylabel("Execution time (ms)", fontsize=16)
     axs.tick_params(axis="both", which="major", labelsize=16)
     axs.tick_params(axis="both", which="minor", labelsize=14)
+
+    # Plot legend with each framework associated with a color
+    for c, fw in zip(colors, frameworks):
+        plt.plot([], c=c, label=fw)
+    plt.legend()
+
     axs.legend(loc="upper left", fontsize=16)
     fig.savefig(f"sddmm-{k}.pdf", bbox_inches="tight", pad_inches=0.05)
 
